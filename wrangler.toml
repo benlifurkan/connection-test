@@ -4,3 +4,7 @@ compatibility_date = "2026-11-13"
 
 [vars]
 ALLOWED_ORIGIN = "*"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
