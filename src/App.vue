@@ -10,7 +10,7 @@ type Sample = {
   note?: string
 }
 
-const API_BASE = import.meta.env.VITE_TEST_API_URL?.replace(/\/$/, '') ?? ''
+const API_BASE = (import.meta.env.VITE_TEST_API_URL?.replace(/\/$/, '') ?? '').trim()
 const packetSizes = [128, 512, 1024, 5120]
 const packetSize = ref(512)
 const intervalMs = ref(3000)
@@ -96,6 +96,7 @@ async function sendProbe() {
     })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const result = await response.json() as { ok?: boolean; receivedBytes?: number }
+    if (!result.ok) throw new Error('Sunucu yanıtı beklenen biçimde değil')
     const latencyMs = Math.round(performance.now() - started)
     totalReceived.value += 1
     samples.value.unshift({ id, sentAt: Date.now(), latencyMs, bytes: runMode.value === 'echo' ? bodyBytes : Number(result.receivedBytes ?? 0), status: 'success' })
@@ -261,7 +262,7 @@ onBeforeUnmount(() => {
             <button class="mode-button" :class="{ selected: runMode === 'echo' }" :disabled="running" @click="runMode = 'echo'">Gidiş-dönüş <small>İstek + yanıt</small></button>
             <button class="mode-button" :class="{ selected: runMode === 'download' }" :disabled="running" @click="runMode = 'download'">Küçük indirme <small>Yanıt boyutu</small></button>
           </div>
-          <p v-if="!API_BASE" class="config-note"><strong>Sunucu henüz bağlanmadı.</strong> Bu arayüz hazır. Gerçek iki cihaz testi için API adresi ve ücretsiz sunucu uç noktaları bir sonraki kurulum adımında bağlanacak.</p>
+          <p v-if="!API_BASE" class="config-note"><strong>Sunucu adresi girilmedi.</strong> Cloudflare Worker API'si yayınlandıktan sonra VITE_TEST_API_URL ayarına Worker adresini ekleyeceğiz.</p>
           <div class="action-row">
             <button class="primary-button" :disabled="running || !API_BASE || !online" @click="startTest"><span class="play-icon">▶</span> Testi başlat</button>
             <button class="secondary-button" :disabled="running || !API_BASE || !online || manualBusy" @click="runSingle">Tek paket gönder</button>
