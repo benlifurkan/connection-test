@@ -31,3 +31,15 @@ API bağlantısı kurulmadan butonlar kapalıdır; arayüz gerçek test yapılm�
 ## Ücretsiz barındırma
 
 İstemci statik olarak GitHub Pages, Cloudflare Pages veya Vercel üzerinde yayınlanabilir. İki cihaz arasında gerçek istek/yanıt ölçümü için CORS destekleyen bir API gerekir. Ücretli servis gerektirmeyen seçenekleri değerlendirirken sağlayıcının ücretsiz katman sınırları ve uyku/soğuk başlatma davranışı ayrıca kontrol edilmelidir.
+
+
+## API (Cloudflare Workers)
+
+API Worker kaynağı `worker/index.ts` dosyasındadır. Worker'ı ücretsiz Cloudflare hesabında yayınlamak için:
+
+1. Cloudflare hesabı açıp Workers & Pages bölümünde bu repoyu bağlayın.
+2. Build komutu gerekmez; Worker entrypoint olarak `worker/index.ts` seçin. Alternatif olarak yerel Wrangler ile `npx wrangler deploy` çalıştırın.
+3. Worker yayınlandıktan sonra adresini alıp Pages projesinin `VITE_TEST_API_URL` environment variable alanına girin ve yeniden deploy edin.
+4. API sağlık kontrolü: `https://WORKER-ADRESİN/api/health`
+
+Bu projede backend Worker ile frontend statik uygulama ayrı yayınlanır. Worker varsayılan olarak CORS'u herkese açık bırakır; bu test uygulamasının kamuya açık olması amaçlandığından uygundur. Daha sonra yalnızca belirli bir siteye izin vermek için Worker'ın `ALLOWED_ORIGIN` değişkeni düzenlenebilir.
