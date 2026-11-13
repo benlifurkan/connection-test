@@ -1,6 +1,6 @@
-name = "connection-test-api"
+name = "connection-test"
 main = "worker/index.ts"
-compatibility_date = "2026-11-14"
+compatibility_date = "2026-11-13"
 
 [vars]
 ALLOWED_ORIGIN = "*"
