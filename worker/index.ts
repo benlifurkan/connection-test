@@ -1,5 +1,6 @@
 export interface Env {
   ALLOWED_ORIGIN?: string
+  ASSETS: Fetcher
 }
 
 function json(body: unknown, status = 200, origin = '*') {
@@ -53,6 +54,6 @@ export default {
       }
     }
 
-    return json({ ok: false, error: 'Not found' }, 404, allowed)
+    return env.ASSETS.fetch(request)
   },
 }
