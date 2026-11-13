@@ -10,7 +10,7 @@ type Sample = {
   note?: string
 }
 
-const API_BASE = (import.meta.env.VITE_TEST_API_URL?.replace(/\/$/, '') ?? '').trim()
+const API_BASE = (import.meta.env.VITE_TEST_API_URL?.replace(/\/$/, '') ?? window.location.origin).trim()
 const packetSizes = [128, 512, 1024, 5120]
 const packetSize = ref(512)
 const intervalMs = ref(3000)
@@ -262,7 +262,7 @@ onBeforeUnmount(() => {
             <button class="mode-button" :class="{ selected: runMode === 'echo' }" :disabled="running" @click="runMode = 'echo'">Gidiş-dönüş <small>İstek + yanıt</small></button>
             <button class="mode-button" :class="{ selected: runMode === 'download' }" :disabled="running" @click="runMode = 'download'">Küçük indirme <small>Yanıt boyutu</small></button>
           </div>
-          <p v-if="!API_BASE" class="config-note"><strong>Sunucu adresi girilmedi.</strong> Cloudflare Worker API'si yayınlandıktan sonra VITE_TEST_API_URL ayarına Worker adresini ekleyeceğiz.</p>
+          
           <div class="action-row">
             <button class="primary-button" :disabled="running || !API_BASE || !online" @click="startTest"><span class="play-icon">▶</span> Testi başlat</button>
             <button class="secondary-button" :disabled="running || !API_BASE || !online || manualBusy" @click="runSingle">Tek paket gönder</button>
