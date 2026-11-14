@@ -1,327 +1,161 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 
-type Sample = {
-  id: number
-  sentAt: number
-  latencyMs: number | null
-  bytes: number
-  status: 'success' | 'failed'
-  note?: string
+type Player = { id: string; name: string }
+type GameState = {
+  ok: boolean; room: string; player: string; phase: 'lobby'|'play'|'won'
+  players: Player[]; ready: number; scene: number; clues: string[]
+  events: { p:string; t:string }[]; message?: string
 }
 
-const API_BASE = (import.meta.env.VITE_TEST_API_URL?.replace(/\/$/, '') ?? window.location.origin).trim()
-const packetSizes = [128, 512, 1024, 5120]
-const packetSize = ref(512)
-const intervalMs = ref(3000)
-const running = ref(false)
-const samples = ref<Sample[]>([])
-const totalSent = ref(0)
-const totalReceived = ref(0)
-const errors = ref(0)
-const lastResult = ref('Henüz test yapılmadı')
-const statusText = ref('Hazır')
-const statusTone = ref<'neutral' | 'good' | 'bad'>('neutral')
-const startedAt = ref<number | null>(null)
-const elapsedSeconds = ref(0)
-const runMode = ref<'echo' | 'download'>('echo')
-const manualBusy = ref(false)
+const API = '/api/game'
+const name = ref('')
+const roomInput = ref('')
+const room = ref('')
+const player = ref('')
+const state = ref<GameState | null>(null)
+const busy = ref(false)
+const error = ref('')
+const notice = ref('')
+const chat = ref('')
+const pollTimer = ref<number | undefined>()
+const started = ref(false)
 
-let timer: number | undefined
-let elapsedTimer: number | undefined
-let sequence = 0
+const me = computed(() => state.value?.players.find(p => p.id === player.value))
+const other = computed(() => state.value?.players.find(p => p.id !== player.value))
+const isHost = computed(() => state.value?.players[0]?.id === player.value)
+const sceneTitle = computed(() => ['GİRİŞ','MAVİ ODA','KİLİTLİ KORİDOR','SON SİNYAL'][state.value?.scene ?? 0])
+const progress = computed(() => Math.min(100, ((state.value?.scene ?? 0) / 3) * 100))
 
-const successRate = computed(() => {
-  if (!totalSent.value) return 0
-  return Math.round((totalReceived.value / totalSent.value) * 100)
-})
-const averageLatency = computed(() => {
-  const values = samples.value.filter((s) => s.status === 'success' && s.latencyMs !== null).map((s) => s.latencyMs as number)
-  if (!values.length) return null
-  return Math.round(values.reduce((a, b) => a + b, 0) / values.length)
-})
-const minLatency = computed(() => {
-  const values = samples.value.filter((s) => s.status === 'success' && s.latencyMs !== null).map((s) => s.latencyMs as number)
-  return values.length ? Math.min(...values) : null
-})
-const maxLatency = computed(() => {
-  const values = samples.value.filter((s) => s.status === 'success' && s.latencyMs !== null).map((s) => s.latencyMs as number)
-  return values.length ? Math.max(...values) : null
-})
-const totalBytes = computed(() => samples.value.reduce((sum, sample) => sum + sample.bytes, 0))
-const formattedBytes = computed(() => {
-  const bytes = totalBytes.value
-  if (bytes < 1024) return `${bytes} B`
-  return `${(bytes / 1024).toFixed(2)} KB`
-})
-const connectionType = computed(() => {
-  const connection = (navigator as Navigator & { connection?: { effectiveType?: string; downlink?: number; rtt?: number; saveData?: boolean } }).connection
-  return connection?.effectiveType ? `${connection.effectiveType.toUpperCase()}${connection.downlink ? ` · ${connection.downlink} Mbps tahmini` : ''}` : 'Tarayıcı bilgisi sunmuyor'
-})
-const online = ref(navigator.onLine)
-
-function setStatus(text: string, tone: 'neutral' | 'good' | 'bad' = 'neutral') {
-  statusText.value = text
-  statusTone.value = tone
+async function api(body: Record<string, unknown>) {
+  const r = await fetch(API, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body), cache:'no-store' })
+  const data = await r.json()
+  if (!r.ok || data.ok === false) throw new Error(data.error || 'Bağlantı kurulamadı')
+  return data
 }
-
-function makePayload(size: number, id: number) {
-  const base = { id, clientTime: new Date().toISOString(), kind: 'connection-test' }
-  const prefix = JSON.stringify(base)
-  const fillerLength = Math.max(0, size - new TextEncoder().encode(prefix).length - 2)
-  return JSON.stringify({ ...base, padding: 'x'.repeat(fillerLength) })
-}
-
-async function sendProbe() {
-  if (!API_BASE) {
-    setStatus('Sunucu adresi yapılandırılmadı', 'bad')
-    lastResult.value = 'Bu dağıtımda VITE_TEST_API_URL ayarı yok. Yerel bağlantı/sunum testi için yerel mod kullanılabilir.'
-    return
-  }
-
-  const id = ++sequence
-  const payload = makePayload(packetSize.value, id)
-  const bodyBytes = new TextEncoder().encode(payload).byteLength
-  const started = performance.now()
-  totalSent.value += 1
-
+async function poll() {
+  if (!room.value || !player.value) return
   try {
-    const endpoint = runMode.value === 'echo' ? '/api/echo' : '/api/download'
-    const response = await fetch(`${API_BASE}${endpoint}`, {
-      method: runMode.value === 'echo' ? 'POST' : 'GET',
-      headers: runMode.value === 'echo' ? { 'Content-Type': 'application/json' } : undefined,
-      body: runMode.value === 'echo' ? payload : undefined,
-      cache: 'no-store',
-      signal: AbortSignal.timeout(15000),
-    })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const result = await response.json() as { ok?: boolean; receivedBytes?: number }
-    if (!result.ok) throw new Error('Sunucu yanıtı beklenen biçimde değil')
-    const latencyMs = Math.round(performance.now() - started)
-    totalReceived.value += 1
-    samples.value.unshift({ id, sentAt: Date.now(), latencyMs, bytes: runMode.value === 'echo' ? bodyBytes : Number(result.receivedBytes ?? 0), status: 'success' })
-    lastResult.value = `Paket #${id} başarıyla ulaştı · ${latencyMs} ms`
-    setStatus('Bağlantı yanıt veriyor', 'good')
-  } catch (error) {
-    errors.value += 1
-    const latencyMs = Math.round(performance.now() - started)
-    samples.value.unshift({ id, sentAt: Date.now(), latencyMs, bytes: bodyBytes, status: 'failed', note: error instanceof Error ? error.message : 'Bilinmeyen hata' })
-    lastResult.value = `Paket #${id} başarısız · ${error instanceof Error ? error.message : 'Bağlantı hatası'}`
-    setStatus('İstek başarısız', 'bad')
-  }
-  samples.value = samples.value.slice(0, 100)
+    const r = await fetch(API + '?room=' + encodeURIComponent(room.value) + '&player=' + encodeURIComponent(player.value), { cache:'no-store' })
+    if (r.ok) state.value = await r.json()
+  } catch {}
 }
-
-async function runSingle() {
-  if (manualBusy.value) return
-  manualBusy.value = true
+function startPolling() {
+  window.clearInterval(pollTimer.value)
+  pollTimer.value = window.setInterval(poll, 2200)
+}
+async function createRoom() {
+  if (!name.value.trim() || busy.value) return
+  busy.value = true; error.value = ''
   try {
-    await sendProbe()
-  } finally {
-    manualBusy.value = false
-  }
+    const d = await api({ action:'create', name:name.value.trim().slice(0,18) })
+    room.value=d.room; player.value=d.player; state.value=d; started.value=true; startPolling()
+  } catch(e) { error.value=e instanceof Error?e.message:'Bir şey ters gitti' } finally { busy.value=false }
 }
-
-function startTest() {
-  if (running.value) return
-  if (!online.value) {
-    setStatus('Cihaz çevrimdışı görünüyor', 'bad')
-    return
-  }
-  running.value = true
-  startedAt.value = Date.now()
-  setStatus('Test çalışıyor', 'good')
-  void sendProbe()
-  timer = window.setInterval(() => {
-    if (document.visibilityState === 'visible') void sendProbe()
-  }, intervalMs.value)
-  elapsedTimer = window.setInterval(() => {
-    if (startedAt.value) elapsedSeconds.value = Math.floor((Date.now() - startedAt.value) / 1000)
-  }, 1000)
+async function joinRoom() {
+  if (!name.value.trim() || !roomInput.value.trim() || busy.value) return
+  busy.value=true; error.value=''
+  try {
+    const d=await api({ action:'join', room:roomInput.value.trim().toUpperCase(), name:name.value.trim().slice(0,18) })
+    room.value=d.room; player.value=d.player; state.value=d; started.value=true; startPolling()
+  } catch(e) { error.value=e instanceof Error?e.message:'Odaya girilemedi' } finally { busy.value=false }
 }
-
-function stopTest() {
-  running.value = false
-  if (timer) window.clearInterval(timer)
-  if (elapsedTimer) window.clearInterval(elapsedTimer)
-  timer = undefined
-  elapsedTimer = undefined
-  setStatus('Test durduruldu')
+async function act(action:string, payload?:string) {
+  if (busy.value || !state.value) return
+  busy.value=true; error.value=''; notice.value=''
+  try { const d=await api({action,room:room.value,player:player.value,payload}); state.value=d }
+  catch(e){ error.value=e instanceof Error?e.message:'Sinyal ulaşmadı' }
+  finally{busy.value=false}
 }
-
-function resetTest() {
-  stopTest()
-  samples.value = []
-  totalSent.value = 0
-  totalReceived.value = 0
-  errors.value = 0
-  sequence = 0
-  startedAt.value = null
-  elapsedSeconds.value = 0
-  lastResult.value = 'Henüz test yapılmadı'
-  setStatus('Hazır')
-}
-
-function exportCsv() {
-  const header = ['Paket', 'Zaman', 'Durum', 'Gecikme (ms)', 'Bayt', 'Not']
-  const rows = [...samples.value].reverse().map((sample) => [
-    sample.id,
-    new Date(sample.sentAt).toISOString(),
-    sample.status,
-    sample.latencyMs ?? '',
-    sample.bytes,
-    sample.note ?? '',
-  ])
-  const csv = [header, ...rows].map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\n')
-  const url = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' }))
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = `connection-test-${new Date().toISOString().replaceAll(':', '-')}.csv`
-  anchor.click()
-  URL.revokeObjectURL(url)
-}
-
-function formatDuration(seconds: number) {
-  const minutes = Math.floor(seconds / 60).toString().padStart(2, '0')
-  const rest = (seconds % 60).toString().padStart(2, '0')
-  return `${minutes}:${rest}`
-}
-
-function updateOnline() {
-  online.value = navigator.onLine
-  if (!online.value) setStatus('Cihaz çevrimdışı', 'bad')
-  else if (!running.value) setStatus('Bağlantı geri geldi')
-}
-window.addEventListener('online', updateOnline)
-window.addEventListener('offline', updateOnline)
-onBeforeUnmount(() => {
-  stopTest()
-  window.removeEventListener('online', updateOnline)
-  window.removeEventListener('offline', updateOnline)
-})
+async function sendChat(){ const v=chat.value.trim(); if(!v)return; chat.value=''; await act('chat',v.slice(0,90)) }
+function copyRoom(){ navigator.clipboard?.writeText(room.value); notice.value='Oda kodu kopyalandı.'; setTimeout(()=>notice.value='',1800) }
+onBeforeUnmount(()=>window.clearInterval(pollTimer.value))
 </script>
 
 <template>
-  <main class="shell">
-    <header class="topbar">
-      <a class="brand" href="#" aria-label="Connection Test ana sayfa">
-        <span class="brand-mark"><span></span><span></span><span></span></span>
-        <span>CONNECTION<span class="brand-light">.LAB</span></span>
-      </a>
-      <div class="topbar-right">
-        <span class="live-dot" :class="{ offline: !online }"></span>
-        <span>{{ online ? 'CİHAZ ÇEVRİMİÇİ' : 'ÇEVRİMDIŞI' }}</span>
-        <span class="version">BETA 0.1</span>
-      </div>
-    </header>
+<div class="app">
+  <div class="grain"></div>
+  <header><div class="brand"><span class="mark">◈</span> KAYIP FREKANS</div><div class="signal"><i></i> LOW DATA MODE</div></header>
 
-    <section class="intro">
-      <div class="eyebrow"><span class="eyebrow-line"></span> LOW BANDWIDTH EXPERIMENT</div>
-      <h1>Az veriyle ne<br /><em>kadar yol alırız?</em></h1>
-      <p class="intro-copy">Bu laboratuvar, zayıf ve kararsız internet bağlantılarında küçük veri paketlerinin teslimatını ve yanıt süresini ölçer. Büyük indirmelere değil, oyunumuzun ihtiyaç duyacağı kadar küçük sinyallere odaklanıyoruz.</p>
+  <main v-if="!started" class="landing">
+    <section class="hero">
+      <div class="kicker">İKİ KİŞİ · TEK SİNYAL · 10–15 DK</div>
+      <h1>Birbirinizde olmayan<br><em>ipuçlarını bulun.</em></h1>
+      <p>Telefon ekranınızın tamamını değil, yalnızca küçük sinyalleri paylaşın. Aynı odadasınız. Ama gerçeğin yalnızca yarısı sizde.</p>
     </section>
-
-    <section class="status-strip">
-      <div class="status-left">
-        <span class="status-indicator" :class="statusTone"></span>
-        <div><strong>{{ statusText }}</strong><small>{{ lastResult }}</small></div>
+    <section class="entry">
+      <div class="card">
+        <label>ADIN</label><input v-model="name" maxlength="18" placeholder="Örn. Elif" @keyup.enter="createRoom">
+        <button class="primary" :disabled="!name.trim() || busy" @click="createRoom">ODA OLUŞTUR <b>→</b></button>
+        <div class="or"><span></span> veya <span></span></div>
+        <label>ODA KODU</label><input v-model="roomInput" maxlength="6" placeholder="ABC123" @keyup.enter="joinRoom" @input="roomInput=roomInput.toUpperCase()">
+        <button class="secondary" :disabled="!name.trim() || roomInput.length<4 || busy" @click="joinRoom">ODA'YA KATIL</button>
+        <small v-if="error" class="error">{{error}}</small>
       </div>
-      <div class="status-meta"><span class="meta-label">TARAYICI AĞ BİLGİSİ</span><strong>{{ connectionType }}</strong></div>
+      <div class="promise"><span>01</span><div><b>Çok küçük paketler.</b><br>Oyun, görüntü veya ses taşımıyor.</div><span>02</span><div><b>Birlikte çözülüyor.</b><br>İkinizin gördüğü şey aynı değil.</div></div>
     </section>
-
-    <section class="dashboard">
-      <div class="main-column">
-        <article class="panel test-panel">
-          <div class="panel-heading">
-            <div><span class="section-index">01 / TEST AYARLARI</span><h2>Bağlantıyı yokla</h2></div>
-            <span class="pill" :class="{ active: running }">{{ running ? 'TEST AKTİF' : 'BEKLEMEDE' }}</span>
-          </div>
-
-          <div class="control-grid">
-            <label class="field">
-              <span>PAKET BOYUTU</span>
-              <select v-model.number="packetSize">
-                <option v-for="size in packetSizes" :key="size" :value="size">{{ size >= 1024 ? (size / 1024) + ' KB' : size + ' B' }}</option>
-              </select>
-              <small>Her istekte gönderilecek yaklaşık veri miktarı.</small>
-            </label>
-            <label class="field">
-              <span>GÖNDERİM ARALIĞI</span>
-              <select v-model.number="intervalMs" :disabled="running">
-                <option :value="1000">1 saniye</option>
-                <option :value="3000">3 saniye</option>
-                <option :value="5000">5 saniye</option>
-                <option :value="10000">10 saniye</option>
-              </select>
-              <small>Otomatik testte iki istek arasındaki süre.</small>
-            </label>
-          </div>
-
-          <div class="mode-row">
-            <span class="mode-title">TEST TÜRÜ</span>
-            <button class="mode-button" :class="{ selected: runMode === 'echo' }" :disabled="running" @click="runMode = 'echo'">Gidiş-dönüş <small>İstek + yanıt</small></button>
-            <button class="mode-button" :class="{ selected: runMode === 'download' }" :disabled="running" @click="runMode = 'download'">Küçük indirme <small>Yanıt boyutu</small></button>
-          </div>
-          
-          <div class="action-row">
-            <button class="primary-button" :disabled="running || !API_BASE || !online" @click="startTest"><span class="play-icon">▶</span> Testi başlat</button>
-            <button class="secondary-button" :disabled="running || !API_BASE || !online || manualBusy" @click="runSingle">Tek paket gönder</button>
-            <button v-if="running" class="stop-button" @click="stopTest">Durdur</button>
-            <button class="quiet-button" :disabled="running" @click="resetTest">Sıfırla</button>
-          </div>
-          <div class="test-foot"><span><i class="tiny-dot"></i> Test süresi: {{ formatDuration(elapsedSeconds) }}</span><span>Sayfa açıkken ölçüm yapılır</span></div>
-        </article>
-
-        <article class="panel history-panel">
-          <div class="panel-heading">
-            <div><span class="section-index">02 / ÖLÇÜM GEÇMİŞİ</span><h2>Son paketler</h2></div>
-            <button class="text-button" :disabled="samples.length === 0" @click="exportCsv">CSV DIŞA AKTAR ↗</button>
-          </div>
-          <div v-if="samples.length" class="table-wrap">
-            <table>
-              <thead><tr><th>PAKET</th><th>SONUÇ</th><th>GECİKME</th><th>BOYUT</th></tr></thead>
-              <tbody>
-                <tr v-for="sample in samples.slice(0, 12)" :key="sample.id">
-                  <td class="mono">#{{ sample.id }}</td>
-                  <td><span class="result-tag" :class="sample.status">{{ sample.status === 'success' ? 'Ulaştı' : 'Hata' }}</span></td>
-                  <td class="mono">{{ sample.latencyMs === null ? '—' : sample.latencyMs + ' ms' }}</td>
-                  <td class="mono">{{ sample.bytes }} B</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div v-else class="empty-state"><span class="empty-icon">⌁</span><strong>Henüz ölçüm yok</strong><small>Test başladığında paket sonuçları burada görünecek.</small></div>
-        </article>
-      </div>
-
-      <aside class="side-column">
-        <article class="panel metric-panel">
-          <span class="section-index">CANLI İSTATİSTİK</span>
-          <div class="metric-primary"><strong>{{ averageLatency === null ? '—' : averageLatency }}</strong><span>ms<br />ORT. GECİKME</span></div>
-          <div class="metric-divider"></div>
-          <div class="metric-row"><span>Başarılı paket</span><strong>{{ totalReceived }} / {{ totalSent }}</strong></div>
-          <div class="metric-row"><span>Başarı oranı</span><strong>{{ successRate }}%</strong></div>
-          <div class="metric-row"><span>Hata sayısı</span><strong :class="{ danger: errors > 0 }">{{ errors }}</strong></div>
-          <div class="metric-row"><span>Min. / Maks.</span><strong>{{ minLatency ?? '—' }} / {{ maxLatency ?? '—' }} ms</strong></div>
-          <div class="metric-row"><span>Aktarılan veri</span><strong>{{ formattedBytes }}</strong></div>
-          <div class="progress-track"><span :style="{ width: successRate + '%' }"></span></div>
-        </article>
-
-        <article class="info-card">
-          <span class="info-icon">i</span>
-          <div><strong>Bu test neyi ölçüyor?</strong><p>Bir isteğin sunucuya gidip yanıtla geri gelme süresini, başarılı istek oranını ve veri hacmini. Yani yalnızca hız değil, bağlantının ne kadar tutarlı olduğunu da gözlemliyoruz.</p></div>
-        </article>
-
-        <article class="info-card warning-card">
-          <span class="info-icon">!</span>
-          <div><strong>Önemli sınır</strong><p>Instagram mesajlarının çalışması, bu testin de çalışacağını garanti etmez. Uygulamaların sunucuları, ağ öncelikleri ve bağlantı yöntemleri farklı olabilir.</p></div>
-        </article>
-      </aside>
-    </section>
-
-    <footer>
-      <span>CONNECTION.LAB <span class="footer-muted">· KÜÇÜK PAKET, BÜYÜK FİKİR.</span></span>
-      <span>Veriler yalnızca bu oturumda tutulur.</span>
-    </footer>
   </main>
+
+  <main v-else class="game">
+    <aside class="side">
+      <div class="room-code"><span>ODA</span><b>{{room}}</b><button @click="copyRoom">KOPYALA</button></div>
+      <div class="players"><span class="label">BAĞLANTI</span>
+        <div class="person"><i class="on"></i><span>{{me?.name || 'Sen'}}</span><em>Sen</em></div>
+        <div class="person"><i :class="{on:!!other}"></i><span>{{other?.name || 'Bekleniyor…'}}</span><em>{{other?'Oyuncu 2':'-'}}</em></div>
+      </div>
+      <div class="mission"><span class="label">GÖREV</span><h3>İkinizin bildiklerini<br>tek bir gerçeğe çevir.</h3><div class="bar"><i :style="{width:progress+'%'}"></i></div><small>{{state?.scene===0?'Diğer oyuncuyu bekliyoruz.':sceneTitle}}</small></div>
+      <div class="tip">⚡ <b>Bağlantı ipucu</b><br>Her hareket birkaç küçük veri paketinden oluşur. Sinyal düşerse oyun tekrar denemeyi kendisi yapar.</div>
+    </aside>
+
+    <section class="board">
+      <div class="board-top"><div><span class="label">DOSYA 07</span><h2>{{sceneTitle}}</h2></div><span class="tiny">{{state?.players.length}} / 2 OYUNCU</span></div>
+
+      <div v-if="state?.phase==='lobby'" class="waiting">
+        <div class="pulse">◉</div><h1>Karşı tarafın<br>sinyali bekleniyor.</h1><p>Bu kodu diğer oyuncuya gönder:</p><button class="room-big" @click="copyRoom">{{room}} <span>↗</span></button><small>Odaya iki kişi girdiğinde dosya açılacak.</small>
+      </div>
+
+      <div v-else-if="state?.phase==='won'" class="waiting won">
+        <div class="pulse">✓</div><h1>Sinyal tamamlandı.</h1><p>İki ayrı ekrandaki parçalar birleşti ve dosya çözüldü.</p><strong>BU HİKÂYE İKİNİZİN.</strong>
+      </div>
+
+      <div v-else class="play">
+        <div class="brief">
+          <span class="stamp">GİZLİ</span>
+          <p v-if="state.scene===1">Saat 21:17'de bir terminal kapandı. Masada yalnızca bir renk notu var. <b>Senin gördüğün ipucu diğer oyuncunun ekranında yok.</b></p>
+          <p v-else-if="state.scene===2">İlk kilit açıldı. Koridorda üç sembol ve yarım bir cümle var. Parçaları birleştirmeden kapı açılmıyor.</p>
+          <p v-else>Son sinyal geliyor. Bu kez yalnızca biriniz doğru seçimi görebilir. <b>Kararı birlikte verin.</b></p>
+        </div>
+
+        <div class="clues">
+          <div v-for="(clue,i) in state.clues" :key="i" class="clue"><span>{{String(i+1).padStart(2,'0')}}</span><p>{{clue}}</p></div>
+        </div>
+
+        <div class="actions" v-if="state.scene===1">
+          <span class="label">ARAŞTIR</span>
+          <button @click="act('inspect','terminal')">⌁ TERMINALİ İNCELE</button>
+          <button @click="act('inspect','desk')">▱ MASAYI İNCELE</button>
+          <button @click="act('inspect','wall')">▦ DUVARI İNCELE</button>
+          <button class="accent" @click="act('solve','148')">KODU GÖNDER · 148</button>
+        </div>
+        <div class="actions" v-else-if="state.scene===2">
+          <span class="label">PARÇAYI TEST ET</span>
+          <button @click="act('inspect','symbol')">◇ SEMBOLLERE BAK</button>
+          <button @click="act('inspect','paper')">⌑ NOTU OKU</button>
+          <button @click="act('solve','BLUE')">MAVİ KAPI</button>
+          <button @click="act('solve','RED')">KIRMIZI KAPI</button>
+        </div>
+        <div class="actions" v-else>
+          <span class="label">SON KARAR</span>
+          <button @click="act('inspect','signal')">◉ SİNYALİ DİNLE</button>
+          <button @click="act('inspect','window')">□ PENCEREYİ KONTROL ET</button>
+          <button class="accent" @click="act('solve','TOGETHER')">BİRLİKTE GÖNDER</button>
+        </div>
+
+        <div class="feed"><div class="feed-head"><span class="label">ORTAK SİNYAL</span><small>canlı</small></div><div v-for="(e,i) in [...state.events].reverse().slice(0,7)" :key="i" class="event"><b>{{e.p}}</b><span>{{e.t}}</span></div><div v-if="!state.events.length" class="empty">Henüz ortak bir hareket yok.</div></div>
+        <div class="chat"><input v-model="chat" maxlength="90" placeholder="Kısa bir mesaj gönder…" @keyup.enter="sendChat"><button @click="sendChat">→</button></div>
+      </div>
+      <div v-if="error" class="toast error">{{error}}</div><div v-if="notice" class="toast">{{notice}}</div>
+    </section>
+  </main>
+</div>
 </template>
