@@ -42,8 +42,10 @@ onBeforeUnmount(()=>window.clearInterval(pollTimer.value))
       <div class="kicker">BİRLİKTE KEŞFET · BİRLİKTE ÇÖZ</div>
       <h1>Gerçeğin sadece<br><em>yarısı sende.</em></h1>
       <p>Deniz fenerinin terk edilmiş odalarında kayıp bir sinyalin peşine düşün. İkinizin ekranı aynı dünyayı gösterir; ama bazı ayrıntılar yalnızca biriniz için görünür.</p>
-      <div class="mini-scene">
-        <div class="sky"></div><div class="moon"></div><div class="sea"></div><div class="rocks"></div><div class="lighthouse"><div class="beam"></div><div class="tower"><b></b><b></b><b></b></div><div class="light"></div></div><div class="figure"></div>
+      <div class="mini-scene photo-scene">
+        <img src="https://commons.wikimedia.org/wiki/Special:Redirect/file/Pottawatomie_Lighthouse.jpg" alt="Gerçek deniz feneri" />
+        <div class="photo-overlay"></div>
+        <div class="photo-caption">POTTAWATOMIE LIGHTHOUSE · GERÇEK FOTOĞRAF</div>
       </div>
     </section>
     <section class="entry">
