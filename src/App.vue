@@ -13,7 +13,7 @@ const name = ref('')
 const roomInput = ref('')
 const room = ref('')
 const player = ref('')
-const state = ref<GameState | null>(null)
+const state = ref<GameState>({ ok:true, room:'', player:'', phase:'lobby', players:[], ready:0, scene:0, clues:[], events:[] })
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
@@ -23,7 +23,6 @@ const started = ref(false)
 
 const me = computed(() => state.value?.players.find(p => p.id === player.value))
 const other = computed(() => state.value?.players.find(p => p.id !== player.value))
-const isHost = computed(() => state.value?.players[0]?.id === player.value)
 const sceneTitle = computed(() => ['GİRİŞ','MAVİ ODA','KİLİTLİ KORİDOR','SON SİNYAL'][state.value?.scene ?? 0])
 const progress = computed(() => Math.min(100, ((state.value?.scene ?? 0) / 3) * 100))
 
@@ -61,7 +60,7 @@ async function joinRoom() {
   } catch(e) { error.value=e instanceof Error?e.message:'Odaya girilemedi' } finally { busy.value=false }
 }
 async function act(action:string, payload?:string) {
-  if (busy.value || !state.value) return
+  if (busy.value) return
   busy.value=true; error.value=''; notice.value=''
   try { const d=await api({action,room:room.value,player:player.value,payload}); state.value=d }
   catch(e){ error.value=e instanceof Error?e.message:'Sinyal ulaşmadı' }
