@@ -8,7 +8,7 @@ type Player={id:string;name:string}
 type State={room:string;players:Player[];scene:number;phase:'lobby'|'play'|'won';clues:Record<string,string[]>;events:{p:string;t:string}[]}
 
 const json=(body:unknown,status=200,origin='*')=>new Response(JSON.stringify(body),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','access-control-allow-origin':origin,'access-control-allow-methods':'GET,POST,OPTIONS','access-control-allow-headers':'Content-Type','vary':'Origin'}})
-const id=()=>crypto.randomUUID().slice(0,8).toUpperCase()
+const id=()=>crypto.randomUUID().slice(0,6).toUpperCase()
 
 export class GameRoom {
   state:State
