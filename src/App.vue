@@ -1,159 +1,91 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 
-type Player = { id: string; name: string }
-type GameState = {
-  ok: boolean; room: string; player: string; phase: 'lobby'|'play'|'won'
-  players: Player[]; ready: number; scene: number; clues: string[]
-  events: { p:string; t:string }[]; message?: string
+type Player={id:string;name:string;x:number;y:number}
+type GameState={
+  ok:boolean;room:string;player:string;phase:'lobby'|'play'|'won';players:Player[];ready:number;scene:number;
+  clues:string[];events:{p:string;t:string}[];positions:Record<string,{x:number;y:number}>
 }
-
-const API = '/api/game'
-const name = ref('')
-const roomInput = ref('')
-const room = ref('')
-const player = ref('')
-const state = ref<GameState>({ ok:true, room:'', player:'', phase:'lobby', players:[], ready:0, scene:0, clues:[], events:[] })
-const busy = ref(false)
-const error = ref('')
-const notice = ref('')
-const chat = ref('')
-const pollTimer = ref<number | undefined>()
-const started = ref(false)
-
-const me = computed(() => state.value?.players.find(p => p.id === player.value))
-const other = computed(() => state.value?.players.find(p => p.id !== player.value))
-const sceneTitle = computed(() => ['GİRİŞ','MAVİ ODA','KİLİTLİ KORİDOR','SON SİNYAL'][state.value?.scene ?? 0])
-const progress = computed(() => Math.min(100, ((state.value?.scene ?? 0) / 3) * 100))
-
-async function api(body: Record<string, unknown>) {
-  const r = await fetch(API, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body), cache:'no-store' })
-  const data = await r.json()
-  if (!r.ok || data.ok === false) throw new Error(data.error || 'Bağlantı kurulamadı')
-  return data
-}
-async function poll() {
-  if (!room.value || !player.value) return
-  try {
-    const r = await fetch(API + '?room=' + encodeURIComponent(room.value) + '&player=' + encodeURIComponent(player.value), { cache:'no-store' })
-    if (r.ok) state.value = await r.json()
-  } catch {}
-}
-function startPolling() {
-  window.clearInterval(pollTimer.value)
-  pollTimer.value = window.setInterval(poll, 2200)
-}
-async function createRoom() {
-  if (!name.value.trim() || busy.value) return
-  busy.value = true; error.value = ''
-  try {
-    const d = await api({ action:'create', name:name.value.trim().slice(0,18) })
-    room.value=d.room; player.value=d.player; state.value=d; started.value=true; startPolling()
-  } catch(e) { error.value=e instanceof Error?e.message:'Bir şey ters gitti' } finally { busy.value=false }
-}
-async function joinRoom() {
-  if (!name.value.trim() || !roomInput.value.trim() || busy.value) return
-  busy.value=true; error.value=''
-  try {
-    const d=await api({ action:'join', room:roomInput.value.trim().toUpperCase(), name:name.value.trim().slice(0,18) })
-    room.value=d.room; player.value=d.player; state.value=d; started.value=true; startPolling()
-  } catch(e) { error.value=e instanceof Error?e.message:'Odaya girilemedi' } finally { busy.value=false }
-}
-async function act(action:string, payload?:string) {
-  if (busy.value) return
-  busy.value=true; error.value=''; notice.value=''
-  try { const d=await api({action,room:room.value,player:player.value,payload}); state.value=d }
-  catch(e){ error.value=e instanceof Error?e.message:'Sinyal ulaşmadı' }
-  finally{busy.value=false}
-}
-async function sendChat(){ const v=chat.value.trim(); if(!v)return; chat.value=''; await act('chat',v.slice(0,90)) }
-function copyRoom(){ navigator.clipboard?.writeText(room.value); notice.value='Oda kodu kopyalandı.'; setTimeout(()=>notice.value='',1800) }
+const API='/api/game'
+const name=ref('');const roomInput=ref('');const room=ref('');const player=ref('')
+const state=ref<GameState>({ok:true,room:'',player:'',phase:'lobby',players:[],ready:0,scene:0,clues:[],events:[],positions:{}})
+const busy=ref(false);const error=ref('');const notice=ref('');const chat=ref('');const started=ref(false);const selected=ref('')
+const pollTimer=ref<number|undefined>()
+const me=computed(()=>state.value.players.find(p=>p.id===player.value))
+const other=computed(()=>state.value.players.find(p=>p.id!==player.value))
+const sceneTitle=computed(()=>['FENERİN İÇİ','ALT TÜNEL','DENİZ FENERİ'][Math.max(0,state.value.scene-1)]||'GİRİŞ')
+const sceneSub=computed(()=>['Gece 21:17 · Bekçi odası','Suyun altında kalan servis tüneli','Son sinyalin geldiği çatı'][Math.max(0,state.value.scene-1)]||'Bekleniyor')
+const progress=computed(()=>Math.min(100,(state.value.scene/3)*100))
+const hotspotText=computed(()=>({radio:'Eski radyo',desk:'Çalışma masası',window:'Pencere',door:'Kilitli kapı',map:'Duvar haritası',crate:'Sandık',lamp:'Sinyal lambası'} as Record<string,string>)[selected.value]||'')
+async function api(body:Record<string,unknown>){const r=await fetch(API,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),cache:'no-store'});const d=await r.json();if(!r.ok||d.ok===false)throw new Error(d.error||'Bağlantı kurulamadı');return d}
+async function poll(){if(!room.value||!player.value)return;try{const r=await fetch(API+'?room='+encodeURIComponent(room.value)+'&player='+encodeURIComponent(player.value),{cache:'no-store'});if(r.ok)state.value=await r.json()}catch{}}
+function startPolling(){window.clearInterval(pollTimer.value);pollTimer.value=window.setInterval(poll,1800)}
+async function createRoom(){if(!name.value.trim()||busy.value)return;busy.value=true;error.value='';try{const d=await api({action:'create',name:name.value.trim().slice(0,18)});room.value=d.room;player.value=d.player;state.value=d;started.value=true;startPolling()}catch(e){error.value=e instanceof Error?e.message:'Bir şey ters gitti'}finally{busy.value=false}}
+async function joinRoom(){if(!name.value.trim()||roomInput.value.trim().length!==6||busy.value)return;busy.value=true;error.value='';try{const d=await api({action:'join',room:roomInput.value.trim().toUpperCase(),name:name.value.trim().slice(0,18)});room.value=d.room;player.value=d.player;state.value=d;started.value=true;startPolling()}catch(e){error.value=e instanceof Error?e.message:'Odaya girilemedi'}finally{busy.value=false}}
+async function act(action:string,payload?:string){if(busy.value)return;busy.value=true;error.value='';try{const d=await api({action,room:room.value,player:player.value,payload});state.value=d}catch(e){error.value=e instanceof Error?e.message:'Sinyal ulaşmadı'}finally{busy.value=false}}
+async function inspect(target:string){selected.value=target;await act('inspect',target)}
+async function move(dx:number,dy:number){const p=me.value;if(!p)return;await act('move',JSON.stringify({x:Math.max(8,Math.min(92,p.x+dx)),y:Math.max(18,Math.min(82,p.y+dy))}))}
+async function solve(answer:string){await act('solve',answer)}
+async function sendChat(){const v=chat.value.trim();if(!v)return;chat.value='';await act('chat',v.slice(0,90))}
+function copyRoom(){navigator.clipboard?.writeText(room.value);notice.value='Oda kodu kopyalandı.';setTimeout(()=>notice.value='',1600)}
 onBeforeUnmount(()=>window.clearInterval(pollTimer.value))
 </script>
 
 <template>
 <div class="app">
-  <div class="grain"></div>
-  <header><div class="brand"><span class="mark">◈</span> KAYIP FREKANS</div><div class="signal"><i></i> LOW DATA MODE</div></header>
+  <header><div class="brand"><span>◈</span> KAYIP FREKANS</div><div class="signal"><i></i> 2 OYUNCU · DÜŞÜK VERİ</div></header>
 
   <main v-if="!started" class="landing">
-    <section class="hero">
-      <div class="kicker">İKİ KİŞİ · TEK SİNYAL · 10–15 DK</div>
-      <h1>Birbirinizde olmayan<br><em>ipuçlarını bulun.</em></h1>
-      <p>Telefon ekranınızın tamamını değil, yalnızca küçük sinyalleri paylaşın. Aynı odadasınız. Ama gerçeğin yalnızca yarısı sizde.</p>
+    <section class="intro">
+      <div class="kicker">BİRLİKTE KEŞFET · BİRLİKTE ÇÖZ</div>
+      <h1>Gerçeğin sadece<br><em>yarısı sende.</em></h1>
+      <p>Deniz fenerinin terk edilmiş odalarında kayıp bir sinyalin peşine düşün. İkinizin ekranı aynı dünyayı gösterir; ama bazı ayrıntılar yalnızca biriniz için görünür.</p>
+      <div class="mini-scene">
+        <div class="sky"></div><div class="moon"></div><div class="sea"></div><div class="rocks"></div><div class="lighthouse"><div class="beam"></div><div class="tower"><b></b><b></b><b></b></div><div class="light"></div></div><div class="figure"></div>
+      </div>
     </section>
     <section class="entry">
-      <div class="card">
-        <label>ADIN</label><input v-model="name" maxlength="18" placeholder="Örn. Elif" @keyup.enter="createRoom">
-        <button class="primary" :disabled="!name.trim() || busy" @click="createRoom">ODA OLUŞTUR <b>→</b></button>
-        <div class="or"><span></span> veya <span></span></div>
-        <label>ODA KODU</label><input v-model="roomInput" maxlength="6" placeholder="ABC123" @keyup.enter="joinRoom" @input="roomInput=roomInput.toUpperCase()">
-        <button class="secondary" :disabled="!name.trim() || roomInput.length<4 || busy" @click="joinRoom">ODA'YA KATIL</button>
-        <small v-if="error" class="error">{{error}}</small>
-      </div>
-      <div class="promise"><span>01</span><div><b>Çok küçük paketler.</b><br>Oyun, görüntü veya ses taşımıyor.</div><span>02</span><div><b>Birlikte çözülüyor.</b><br>İkinizin gördüğü şey aynı değil.</div></div>
+      <div class="card"><label>OYUNCU ADI</label><input v-model="name" maxlength="18" placeholder="Örn. Elif" @keyup.enter="createRoom">
+      <button class="primary" :disabled="!name.trim()||busy" @click="createRoom">YENİ OYUN <b>→</b></button>
+      <div class="or"><span></span> ARKADAŞININ OYUNUNA GİR <span></span></div>
+      <label>6 HANELİ ODA KODU</label><input v-model="roomInput" maxlength="6" inputmode="text" placeholder="ABC123" @input="roomInput=roomInput.toUpperCase()" @keyup.enter="joinRoom">
+      <button class="secondary" :disabled="!name.trim()||roomInput.length!==6||busy" @click="joinRoom">OYUNA KATIL</button>
+      <small v-if="error" class="error">{{error}}</small></div>
+      <div class="promise"><span>01</span><b>Görsel dünya cihazda.</b><small>İnternet sadece küçük hareket sinyalleri taşır.</small><span>02</span><b>İki ekran, iki bakış.</b><small>Bulduğun şeyi arkadaşına anlatman gerekecek.</small></div>
     </section>
   </main>
 
   <main v-else class="game">
-    <aside class="side">
-      <div class="room-code"><span>ODA</span><b>{{room}}</b><button @click="copyRoom">KOPYALA</button></div>
-      <div class="players"><span class="label">BAĞLANTI</span>
-        <div class="person"><i class="on"></i><span>{{me?.name || 'Sen'}}</span><em>Sen</em></div>
-        <div class="person"><i :class="{on:!!other}"></i><span>{{other?.name || 'Bekleniyor…'}}</span><em>{{other?'Oyuncu 2':'-'}}</em></div>
-      </div>
-      <div class="mission"><span class="label">GÖREV</span><h3>İkinizin bildiklerini<br>tek bir gerçeğe çevir.</h3><div class="bar"><i :style="{width:progress+'%'}"></i></div><small>{{state?.scene===0?'Diğer oyuncuyu bekliyoruz.':sceneTitle}}</small></div>
-      <div class="tip">⚡ <b>Bağlantı ipucu</b><br>Her hareket birkaç küçük veri paketinden oluşur. Sinyal düşerse oyun tekrar denemeyi kendisi yapar.</div>
+    <aside class="sidebar">
+      <div class="room"><span>ODA</span><strong>{{room}}</strong><button @click="copyRoom">KOPYALA</button></div>
+      <div class="players"><label>EKİP</label><div class="person"><i class="online"></i><b>{{me?.name||'Sen'}}</b><small>SEN</small></div><div class="person"><i :class="{online:!!other}"></i><b>{{other?.name||'Bekleniyor…'}}</b><small>{{other?'OYUNCU 2':'-'}}</small></div></div>
+      <div class="mission"><label>VAKA 07</label><h3>Kayıp frekansın kaynağını bulun.</h3><div class="progress"><i :style="{width:progress+'%'}"></i></div><small>{{sceneSub}}</small></div>
+      <div class="controls"><label>HAREKET</label><div class="pad"><button @click="move(0,-6)">▲</button><button @click="move(-6,0)">◀</button><button @click="move(6,0)">▶</button><button @click="move(0,6)">▼</button></div></div>
+      <div class="lowdata">● Sinyal hafif.<br><b>{{state.players.length}} oyuncu bağlı</b><br>Son senkronizasyon otomatik.</div>
     </aside>
 
-    <section class="board">
-      <div class="board-top"><div><span class="label">DOSYA 07</span><h2>{{sceneTitle}}</h2></div><span class="tiny">{{state?.players.length}} / 2 OYUNCU</span></div>
-
-      <div v-if="state?.phase==='lobby'" class="waiting">
-        <div class="pulse">◉</div><h1>Karşı tarafın<br>sinyali bekleniyor.</h1><p>Bu kodu diğer oyuncuya gönder:</p><button class="room-big" @click="copyRoom">{{room}} <span>↗</span></button><small>Odaya iki kişi girdiğinde dosya açılacak.</small>
-      </div>
-
-      <div v-else-if="state?.phase==='won'" class="waiting won">
-        <div class="pulse">✓</div><h1>Sinyal tamamlandı.</h1><p>İki ayrı ekrandaki parçalar birleşti ve dosya çözüldü.</p><strong>BU HİKÂYE İKİNİZİN.</strong>
-      </div>
-
-      <div v-else class="play">
-        <div class="brief">
-          <span class="stamp">GİZLİ</span>
-          <p v-if="state.scene===1">Saat 21:17'de bir terminal kapandı. Masada yalnızca bir renk notu var. <b>Senin gördüğün ipucu diğer oyuncunun ekranında yok.</b></p>
-          <p v-else-if="state.scene===2">İlk kilit açıldı. Koridorda üç sembol ve yarım bir cümle var. Parçaları birleştirmeden kapı açılmıyor.</p>
-          <p v-else>Son sinyal geliyor. Bu kez yalnızca biriniz doğru seçimi görebilir. <b>Kararı birlikte verin.</b></p>
+    <section class="world">
+      <div class="worldbar"><div><label>{{sceneTitle}}</label><h2>{{sceneSub}}</h2></div><span>{{state.players.length}} / 2</span></div>
+      <div v-if="state.phase==='lobby'" class="lobby"><div class="lighthouse-icon">✦</div><h1>İkinci oyuncuyu bekliyoruz.</h1><p>Arkadaşına bu kodu gönder.</p><button @click="copyRoom">{{room}} <span>↗</span></button></div>
+      <template v-else-if="state.phase==='play'">
+        <div class="scene" :class="'scene-'+state.scene">
+          <div class="backdrop"><div class="wall-light"></div><div class="window"></div><div class="floor"></div><div class="rug"></div><div class="desk" @click="inspect('desk')" :class="{selected:selected==='desk'}"><span>▤</span></div><div class="radio" @click="inspect('radio')" :class="{selected:selected==='radio'}"><span>◉</span></div><div class="map" @click="inspect('map')" :class="{selected:selected==='map'}">✦</div><div class="door" @click="inspect('door')" :class="{selected:selected==='door'}"><span>LOCK</span></div><div class="lamp" @click="inspect('lamp')" :class="{selected:selected==='lamp'}"></div><div class="crate" @click="inspect('crate')" :class="{selected:selected==='crate'}"></div><div class="beam"></div></div>
+          <div v-for="p in state.players" :key="p.id" class="avatar" :class="{me:p.id===player}" :style="{left:p.x+'%',top:p.y+'%'}"><div class="avatar-head"></div><div class="avatar-body"></div><span>{{p.name}}</span></div>
+          <div class="hint" v-if="selected"><b>{{hotspotText}}</b><span>{{state.clues[state.clues.length-1]||'İnceleniyor…'}}</span></div>
+          <div class="objective"><span>HEDEF</span><b>{{state.scene===1?'Odayı araştır.':state.scene===2?'Tünelin sırrını çöz.':'Son sinyali gönder.'}}</b></div>
         </div>
-
-        <div class="clues">
-          <div v-for="(clue,i) in state.clues" :key="i" class="clue"><span>{{String(i+1).padStart(2,'0')}}</span><p>{{clue}}</p></div>
+        <div class="bottom">
+          <div class="clue-strip"><label>CEPLERİNDEKİ İPUÇLARI</label><div v-if="state.clues.length" class="clues"><span v-for="(c,i) in state.clues" :key="i">◈ {{c}}</span></div><small v-else>Çevredeki nesnelere dokun ve keşfet.</small></div>
+          <div class="actions">
+            <button v-if="state.scene===1" class="solve" @click="solve('148')">KİLİDİ AÇ · 148</button>
+            <button v-if="state.scene===2" class="solve" @click="solve('RED')">KIRMIZI KAPI</button>
+            <button v-if="state.scene===3" class="solve" @click="solve('TOGETHER')">SON SİNYALİ GÖNDER</button>
+          </div>
+          <div class="chat"><div class="messages"><div v-for="(e,i) in [...state.events].reverse().slice(0,4)" :key="i"><b>{{e.p}}</b> {{e.t}}</div></div><div class="chatbox"><input v-model="chat" maxlength="90" placeholder="Arkadaşına bir şey söyle…" @keyup.enter="sendChat"><button @click="sendChat">→</button></div></div>
         </div>
-
-        <div class="actions" v-if="state.scene===1">
-          <span class="label">ARAŞTIR</span>
-          <button @click="act('inspect','terminal')">⌁ TERMINALİ İNCELE</button>
-          <button @click="act('inspect','desk')">▱ MASAYI İNCELE</button>
-          <button @click="act('inspect','wall')">▦ DUVARI İNCELE</button>
-          <button class="accent" @click="act('solve','148')">KODU GÖNDER · 148</button>
-        </div>
-        <div class="actions" v-else-if="state.scene===2">
-          <span class="label">PARÇAYI TEST ET</span>
-          <button @click="act('inspect','symbol')">◇ SEMBOLLERE BAK</button>
-          <button @click="act('inspect','paper')">⌑ NOTU OKU</button>
-          <button @click="act('solve','BLUE')">MAVİ KAPI</button>
-          <button @click="act('solve','RED')">KIRMIZI KAPI</button>
-        </div>
-        <div class="actions" v-else>
-          <span class="label">SON KARAR</span>
-          <button @click="act('inspect','signal')">◉ SİNYALİ DİNLE</button>
-          <button @click="act('inspect','window')">□ PENCEREYİ KONTROL ET</button>
-          <button class="accent" @click="act('solve','TOGETHER')">BİRLİKTE GÖNDER</button>
-        </div>
-
-        <div class="feed"><div class="feed-head"><span class="label">ORTAK SİNYAL</span><small>canlı</small></div><div v-for="(e,i) in [...state.events].reverse().slice(0,7)" :key="i" class="event"><b>{{e.p}}</b><span>{{e.t}}</span></div><div v-if="!state.events.length" class="empty">Henüz ortak bir hareket yok.</div></div>
-        <div class="chat"><input v-model="chat" maxlength="90" placeholder="Kısa bir mesaj gönder…" @keyup.enter="sendChat"><button @click="sendChat">→</button></div>
-      </div>
-      <div v-if="error" class="toast error">{{error}}</div><div v-if="notice" class="toast">{{notice}}</div>
+      </template>
+      <div v-else class="won"><div>✦</div><h1>Sinyali buldunuz.</h1><p>İki ayrı bakış açısı tek bir hikâyede birleşti.</p><strong>VAKA 07 · ÇÖZÜLDÜ</strong></div>
+      <div v-if="notice" class="toast">{{notice}}</div><div v-if="error" class="toast error">{{error}}</div>
     </section>
   </main>
 </div>
