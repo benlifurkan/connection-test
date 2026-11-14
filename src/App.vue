@@ -15,6 +15,8 @@ const me=computed(()=>state.value.players.find(p=>p.id===player.value))
 const other=computed(()=>state.value.players.find(p=>p.id!==player.value))
 const sceneTitle=computed(()=>['FENERİN İÇİ','ALT TÜNEL','DENİZ FENERİ'][Math.max(0,state.value.scene-1)]||'GİRİŞ')
 const sceneSub=computed(()=>['Gece 21:17 · Bekçi odası','Suyun altında kalan servis tüneli','Son sinyalin geldiği çatı'][Math.max(0,state.value.scene-1)]||'Bekleniyor')
+const sceneImage=computed(()=>['https://commons.wikimedia.org/wiki/Special:Redirect/file/Pottawatomie_Lighthouse_Interior.jpg','https://commons.wikimedia.org/wiki/Special:Redirect/file/Point_Reyes_Lighthouse_interior.jpg','https://commons.wikimedia.org/wiki/Special:Redirect/file/Lighthouse_public_domain.jpg'][Math.max(0,state.value.scene-1)]||'')
+const radioImage='https://commons.wikimedia.org/wiki/Special:Redirect/file/Old_Radio.JPG'
 const progress=computed(()=>Math.min(100,(state.value.scene/3)*100))
 const hotspotText=computed(()=>({radio:'Eski radyo',desk:'Çalışma masası',window:'Pencere',door:'Kilitli kapı',map:'Duvar haritası',crate:'Sandık',lamp:'Sinyal lambası'} as Record<string,string>)[selected.value]||'')
 async function api(body:Record<string,unknown>){const r=await fetch(API,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),cache:'no-store'});const d=await r.json();if(!r.ok||d.ok===false)throw new Error(d.error||'Bağlantı kurulamadı');return d}
@@ -61,7 +63,7 @@ onBeforeUnmount(()=>window.clearInterval(pollTimer.value))
       <div class="players"><label>EKİP</label><div class="person"><i class="online"></i><b>{{me?.name||'Sen'}}</b><small>SEN</small></div><div class="person"><i :class="{online:!!other}"></i><b>{{other?.name||'Bekleniyor…'}}</b><small>{{other?'OYUNCU 2':'-'}}</small></div></div>
       <div class="mission"><label>VAKA 07</label><h3>Kayıp frekansın kaynağını bulun.</h3><div class="progress"><i :style="{width:progress+'%'}"></i></div><small>{{sceneSub}}</small></div>
       <div class="controls"><label>HAREKET</label><div class="pad"><button @click="move(0,-6)">▲</button><button @click="move(-6,0)">◀</button><button @click="move(6,0)">▶</button><button @click="move(0,6)">▼</button></div></div>
-      <div class="lowdata">● Sinyal hafif.<br><b>{{state.players.length}} oyuncu bağlı</b><br>Son senkronizasyon otomatik.</div>
+      <div class="lowdata">● Sinyal hafif.<br><b>{{state.players.length}} oyuncu bağlı</b><br>Son senkronizasyon otomatik.<br><br><small>Görseller: Wikimedia Commons · kamu malı / CC</small></div>
     </aside>
 
     <section class="world">
@@ -69,7 +71,7 @@ onBeforeUnmount(()=>window.clearInterval(pollTimer.value))
       <div v-if="state.phase==='lobby'" class="lobby"><div class="lighthouse-icon">✦</div><h1>İkinci oyuncuyu bekliyoruz.</h1><p>Arkadaşına bu kodu gönder.</p><button @click="copyRoom">{{room}} <span>↗</span></button></div>
       <template v-else-if="state.phase==='play'">
         <div class="scene" :class="'scene-'+state.scene">
-          <div class="backdrop"><div class="wall-light"></div><div class="window"></div><div class="floor"></div><div class="rug"></div><div class="desk" @click="inspect('desk')" :class="{selected:selected==='desk'}"><span>▤</span></div><div class="radio" @click="inspect('radio')" :class="{selected:selected==='radio'}"><span>◉</span></div><div class="map" @click="inspect('map')" :class="{selected:selected==='map'}">✦</div><div class="door" @click="inspect('door')" :class="{selected:selected==='door'}"><span>LOCK</span></div><div class="lamp" @click="inspect('lamp')" :class="{selected:selected==='lamp'}"></div><div class="crate" @click="inspect('crate')" :class="{selected:selected==='crate'}"></div><div class="beam"></div></div>
+          <div class="backdrop" :style="{backgroundImage:`linear-gradient(rgba(5,9,15,.48),rgba(5,9,15,.78)),url("${sceneImage}")`}"><div class="wall-light"></div><div class="window"></div><div class="floor"></div><div class="rug"></div><div class="desk" @click="inspect('desk')" :class="{selected:selected==='desk'}"><span>▤</span></div><div class="radio" @click="inspect('radio')" :class="{selected:selected==='radio'}"><img :src="radioImage" alt="Eski radyo"><span>◉</span></div><div class="map" @click="inspect('map')" :class="{selected:selected==='map'}">✦</div><div class="door" @click="inspect('door')" :class="{selected:selected==='door'}"><span>LOCK</span></div><div class="lamp" @click="inspect('lamp')" :class="{selected:selected==='lamp'}"></div><div class="crate" @click="inspect('crate')" :class="{selected:selected==='crate'}"></div><div class="beam"></div></div>
           <div v-for="p in state.players" :key="p.id" class="avatar" :class="{me:p.id===player}" :style="{left:p.x+'%',top:p.y+'%'}"><div class="avatar-head"></div><div class="avatar-body"></div><span>{{p.name}}</span></div>
           <div class="hint" v-if="selected"><b>{{hotspotText}}</b><span>{{state.clues[state.clues.length-1]||'İnceleniyor…'}}</span></div>
           <div class="objective"><span>HEDEF</span><b>{{state.scene===1?'Odayı araştır.':state.scene===2?'Tünelin sırrını çöz.':'Son sinyali gönder.'}}</b></div>
